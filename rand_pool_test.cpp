@@ -4,7 +4,16 @@
 
 # include <gtest/gtest.h>
 
+# include <tuple>
+# include <chrono>
+# include <numeric>
+# include <ranges>
+#include <bits/ranges_algo.h>
+
 # include "rand-pool.H"
+
+using namespace std;
+using namespace std::chrono;
 
 void use_random_array(const vector<double> &array)
 {
@@ -49,51 +58,167 @@ TEST(basic, ctor)
 
 struct BigPool : public testing::Test
 {
+  static constexpr size_t Array_Size = 200000;
+  static constexpr size_t Num_Threads = 22;
   RandomNumberPool pool =
-    RandomNumberPool(10, 200000, 0);
+    RandomNumberPool(Num_Threads + 1, Array_Size, 0);
 
   atomic<bool> stop;
 
-  // thread that constantly locks an array and uses it
-  void use_random_array()
+  long avg_sum;
+  long median_sum;
+  long min_sum;
+  long max_sum;
+
+  long avg_lock;
+  long median_lock;
+  long min_lock;
+  long max_lock;
+
+  mutable long threshold = -1;
+
+  void SetUp() override
+  {
+    stop = false;
+    benchmark(10, Array_Size);
+  }
+
+  void TearDown() override
+  {
+  }
+
+  // avg_sum, median_sum, min_sum, max_sum
+  void benchmark(const size_t num_iterations,
+                 const size_t n)
+  {
+    vector<double> array(n);
+    for (size_t i = 0; i < n; ++i)
+      array[i] = i + 1;
+
+    // first we measure the time it takes to sum the array
+    vector<microseconds> durations;
+    double sum = 0.0;
+    for (size_t i = 0; i < num_iterations; ++i)
+      {
+        const auto start = chrono::high_resolution_clock::now();
+        for (size_t j = 0; j < n; ++j)
+          sum += array[j];
+        const auto end = chrono::high_resolution_clock::now();
+        auto duration = chrono::duration_cast<chrono::microseconds>(end - start);
+        cout << "Iteration " << i << " took " << duration.count() << " us" << endl;
+        durations.push_back(duration);
+      }
+
+    // now calculate the average, median_sum, min_sum, and max_sum
+    ranges::sort(durations);
+    avg_sum = accumulate(durations.begin(), durations.end(), 0L,
+                         [](const long a, const microseconds &b)
+                         {
+                           return a + b.count();
+                         }) / num_iterations;
+    median_sum = durations[num_iterations / 2].count();
+    min_sum = durations[0].count();
+    max_sum = durations[num_iterations - 1].count();
+
+    // Now we measure the time it takes to lock the array
+    vector<microseconds> lock_durations;
+    for (size_t i = 0; i < num_iterations; ++i)
+      {
+        const auto start = chrono::high_resolution_clock::now();
+        const auto &locked_array = pool.lock_array();
+        const auto end = chrono::high_resolution_clock::now();
+        auto duration = chrono::duration_cast<chrono::microseconds>(end - start);
+        cout << "Lock iteration " << i << " took " << duration.count() << " us" << endl;
+        lock_durations.push_back(duration);
+        pool.release_array(locked_array);
+      }
+
+    ranges::sort(lock_durations);
+    avg_lock = accumulate(lock_durations.begin(), lock_durations.end(), 0L,
+                          [](const long a, const microseconds &b)
+                          {
+                            return a + b.count();
+                          }) / num_iterations;
+    median_lock = lock_durations[num_iterations / 2].count();
+    min_lock = lock_durations[0].count();
+    max_lock = lock_durations[num_iterations - 1].count();
+
+    const long max_latency = max_sum + max_lock;
+    threshold = max_latency + 0.1 * max_latency;
+  }
+
+  // thread that constantly locks an array and uses it. This thread
+  void use_random_array(int &result)
   {
     while (not stop)
       {
+        const auto start_lock = chrono::high_resolution_clock::now();
         const auto &array = pool.lock_array();
+        const auto end_lock = chrono::high_resolution_clock::now();
+        const auto duration_lock = chrono::duration_cast<chrono::microseconds>(end_lock - start_lock);
+        cout << "Lock took " << duration_lock.count() << " us" << endl;
+
+        const auto start = chrono::high_resolution_clock::now();
         double sum = 0.0;
         for (size_t i = 0; i < array.size(); ++i)
           sum += array[i];
 
-        cout << "Sum: " << sum << endl;
+        const auto end = chrono::high_resolution_clock::now();
+        const auto duration = chrono::duration_cast<chrono::microseconds>(end - start_lock);
+        cout << "Sum took " << duration.count() << " us" << endl;
+
+        const auto start_release = chrono::high_resolution_clock::now();
         pool.release_array(array);
+        const auto end_release = chrono::high_resolution_clock::now();
+        const auto duration_release = chrono::duration_cast<chrono::microseconds>(end_release - start_release);
+        cout << "Release took " << duration_release.count() << " us" << endl;
+
+        // if (duration.count() > threshold)
+        //   {
+        //     cout << "****************************************" << endl
+        //       << "Thread took too long: " << duration.count() << " us" << endl
+        //       << "****************************************" << endl;
+        //     stop = true;
+        //     result = false;
+        //     return;
+        //   }
+
+        //cout << "Success" << endl;
       }
+    result = true;
   }
 };
 
 TEST_F(BigPool, ctor)
 {
-  EXPECT_EQ(pool.pool_size, 10);
-  EXPECT_EQ(pool.array_size, 200000);
+  EXPECT_EQ(pool.pool_size, Num_Threads + 1);
+  EXPECT_EQ(pool.array_size, Array_Size);
   EXPECT_EQ(pool.seed, 0);
 
-  vector<vector<double>*> locked_arrays;
   vector<thread> threads;
+  vector<int> results(Num_Threads, true);
+
+  cout << "Starting threads" << endl
+    << "Mean: " << avg_sum << endl
+    << "Median: " << median_sum << endl
+    << "Min: " << min_sum << endl
+    << "Max: " << max_sum << endl
+    << "Threshold: " << threshold << endl;
 
   // instantiate 9 threads that constantly lock and use an array
-  for (size_t i = 0; i < 9; ++i)
-    threads.emplace_back(&BigPool::use_random_array, this);
+  for (size_t i = 0; i < 5; ++i)
+    threads.emplace_back(&BigPool::use_random_array, this, ref(results[i]));
 
   // keep thread running for 1 minute
   this_thread::sleep_for(1min);
 
-  // stop the threads
+  // stop the threads and collect the results
   stop = true;
+
   for (auto &t: threads)
     t.join();
 
-  cout << "Threads finished" << endl;
+  ASSERT_TRUE(ranges::all_of(results, [](const int r) { return r; }));
 
-  // unlock the arrays
-  for (size_t i = 0; i < locked_arrays.size(); ++i)
-    pool.release_array(*locked_arrays[i]);
+  cout << "Threads finished" << endl;
 }

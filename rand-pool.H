@@ -7,9 +7,9 @@
 
 # include <gsl/gsl_rng.h>
 
+#include <functional>
 #include <iostream>
 #include <vector>
-#include <ranges>
 #include <thread>
 #include <mutex>
 #include <condition_variable>
@@ -77,6 +77,7 @@ class RandomNumberPool
       for (size_t i = 0; i < pool_size; ++i)
         if (available[i])
           {
+            cout << "Locking array " << i << endl;
             available[i] = false;
             pending_arrays.push_back(&pool[i]);
             return pool[i];
@@ -139,7 +140,7 @@ class RandomNumberPool
                   lock.lock();
                   available[i] = true;
                   pending_arrays.erase(ranges::find(pending_arrays, &pool[i]));
-                  //cv.notify_one();
+                  cv.notify_one();
                 }
             }
         }
