@@ -63,6 +63,10 @@ class RandomNumberPool
 
     // When i need an random buffer, I call this method.
     // It throws an exception if no buffer is available
+    // Extremely careful with this method:
+    // 1) It blocks until a buffer is available (all buffers are in use)
+    // 2) It does not check if the buffer is already in use by another thread
+    // 3) It does not check if the pool is being destroyed
     vector<double>& lock_array()
     {
       unique_lock<mutex> lock(mtx);
@@ -91,13 +95,15 @@ class RandomNumberPool
     void release_array(const vector<double> &array)
     {
       unique_lock lock(mtx);
-      for (size_t i = 0; i < pool_size; ++i)
+      for (size_t i = 0; i < pool_size; ++i) // find the array in the pool
         {
           if (&pool[i] == &array)
             {
-              available[i] = true; // this will wake up the refiller once it is signaled
-              // notify the refiller, the pending_arrays should contain the array
-              // that was just released and the refiller should refill it
+              // this will wake up the refiller once it is signaled
+              // notify the refiller, the pending_arrays should contain
+              // the array that was just released and the refiller
+              // should refill it
+              available[i] = true;
               cv.notify_one();
               return;
             }
@@ -114,7 +120,7 @@ class RandomNumberPool
       cout << "Array filled" << endl;
     }
 
-    void refill_loop()
+    void refill_loop() // THis thread refills the arrays
     {
       while (not stop)
         {

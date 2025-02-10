@@ -17,9 +17,8 @@ using namespace std::chrono;
 
 void use_random_array(const vector<double> &array)
 {
-  double sum = 0.0;
-  for (size_t i = 0; i < array.size(); ++i)
-    sum += array[i];
+  const double sum =
+    accumulate(array.begin(), array.end(), 0.0);
 
   cout << "Sum: " << sum << endl;
 }
@@ -52,8 +51,10 @@ TEST(basic, ctor)
   cout << "Threads finished" << endl;
 
   // unlock the arrays
-  for (size_t i = 0; i < locked_arrays.size(); ++i)
-    pool.release_array(*locked_arrays[i]);
+  ranges::for_each(locked_arrays, [&pool](const vector<double> *array)
+                   {
+                     pool.release_array(*array);
+                   });
 }
 
 struct BigPool : public testing::Test
@@ -85,6 +86,7 @@ struct BigPool : public testing::Test
 
   void TearDown() override
   {
+    // empty
   }
 
   // avg_sum, median_sum, min_sum, max_sum
@@ -159,13 +161,11 @@ struct BigPool : public testing::Test
         cout << "Lock took " << duration_lock.count() << " us" << endl;
 
         const auto start = chrono::high_resolution_clock::now();
-        double sum = 0.0;
-        for (size_t i = 0; i < array.size(); ++i)
-          sum += array[i];
+        double sum = accumulate(array.begin(), array.end(), 0.0);
 
         const auto end = chrono::high_resolution_clock::now();
-        const auto duration = chrono::duration_cast<chrono::microseconds>(end - start_lock);
-        cout << "Sum took " << duration.count() << " us" << endl;
+        const auto duration = chrono::duration_cast<chrono::microseconds>(end - start);
+        cout << "Sum " << sum << "took " << duration.count() << " us" << endl;
 
         const auto start_release = chrono::high_resolution_clock::now();
         pool.release_array(array);
