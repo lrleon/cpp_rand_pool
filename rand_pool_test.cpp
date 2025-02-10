@@ -55,12 +55,14 @@ TEST(basic, ctor)
                    {
                      pool.release_array(*array);
                    });
+
+  cout << "Arrays released" << endl;
 }
 
 struct BigPool : public testing::Test
 {
   static constexpr size_t Array_Size = 200000;
-  static constexpr size_t Num_Threads = 22;
+  static constexpr size_t Num_Threads = 10;
   RandomNumberPool pool =
     RandomNumberPool(Num_Threads + 1, Array_Size, 0);
 
@@ -81,7 +83,7 @@ struct BigPool : public testing::Test
   void SetUp() override
   {
     stop = false;
-    benchmark(10, Array_Size);
+    benchmark(Num_Threads, Array_Size);
   }
 
   void TearDown() override
@@ -90,7 +92,7 @@ struct BigPool : public testing::Test
   }
 
   // avg_sum, median_sum, min_sum, max_sum
-  void benchmark(const size_t num_iterations,
+  void benchmark(const size_t num_samples,
                  const size_t n)
   {
     vector<double> array(n);
@@ -100,7 +102,7 @@ struct BigPool : public testing::Test
     // first we measure the time it takes to sum the array
     vector<microseconds> durations;
     double sum = 0.0;
-    for (size_t i = 0; i < num_iterations; ++i)
+    for (size_t i = 0; i < num_samples; ++i)
       {
         const auto start = chrono::high_resolution_clock::now();
         for (size_t j = 0; j < n; ++j)
@@ -117,14 +119,14 @@ struct BigPool : public testing::Test
                          [](const long a, const microseconds &b)
                          {
                            return a + b.count();
-                         }) / num_iterations;
-    median_sum = durations[num_iterations / 2].count();
+                         }) / num_samples;
+    median_sum = durations[num_samples / 2].count();
     min_sum = durations[0].count();
-    max_sum = durations[num_iterations - 1].count();
+    max_sum = durations[num_samples - 1].count();
 
     // Now we measure the time it takes to lock the array
     vector<microseconds> lock_durations;
-    for (size_t i = 0; i < num_iterations; ++i)
+    for (size_t i = 0; i < num_samples; ++i)
       {
         const auto start = chrono::high_resolution_clock::now();
         const auto &locked_array = pool.lock_array();
@@ -140,10 +142,10 @@ struct BigPool : public testing::Test
                           [](const long a, const microseconds &b)
                           {
                             return a + b.count();
-                          }) / num_iterations;
-    median_lock = lock_durations[num_iterations / 2].count();
+                          }) / num_samples;
+    median_lock = lock_durations[num_samples / 2].count();
     min_lock = lock_durations[0].count();
-    max_lock = lock_durations[num_iterations - 1].count();
+    max_lock = lock_durations[num_samples - 1].count();
 
     const long max_latency = max_sum + max_lock;
     threshold = max_latency + 0.1 * max_latency;
@@ -173,17 +175,17 @@ struct BigPool : public testing::Test
         const auto duration_release = chrono::duration_cast<chrono::microseconds>(end_release - start_release);
         cout << "Release took " << duration_release.count() << " us" << endl;
 
-        // if (duration.count() > threshold)
-        //   {
-        //     cout << "****************************************" << endl
-        //       << "Thread took too long: " << duration.count() << " us" << endl
-        //       << "****************************************" << endl;
-        //     stop = true;
-        //     result = false;
-        //     return;
-        //   }
+         if (duration.count() > threshold)
+           {
+             cout << "****************************************" << endl
+               << "Thread took too long: " << duration.count() << " us" << endl
+               << "****************************************" << endl;
+             stop = true;
+             result = false;
+             return;
+           }
 
-        //cout << "Success" << endl;
+        cout << "Success" << endl;
       }
     result = true;
   }
@@ -205,12 +207,12 @@ TEST_F(BigPool, ctor)
     << "Max: " << max_sum << endl
     << "Threshold: " << threshold << endl;
 
-  // instantiate 9 threads that constantly lock and use an array
-  for (size_t i = 0; i < 5; ++i)
+  // instantiate Num_Threads threads that constantly lock and use an array
+  for (size_t i = 0; i < Num_Threads; ++i)
     threads.emplace_back(&BigPool::use_random_array, this, ref(results[i]));
 
   // keep thread running for 1 minute
-  this_thread::sleep_for(1min);
+  this_thread::sleep_for(10s);
 
   // stop the threads and collect the results
   stop = true;
