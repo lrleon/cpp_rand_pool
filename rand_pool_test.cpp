@@ -32,17 +32,19 @@ TEST(basic, ctor)
   EXPECT_EQ(pool.array_size, 5);
   EXPECT_EQ(pool.seed, 0);
 
-  vector<vector<double>*> locked_arrays;
+  vector<size_t> indices;
   vector<thread> threads;
 
   // lock two arrays and use them in use_random_array threads
   for (size_t i = 0; i < 2; ++i)
     {
-      locked_arrays.push_back(&pool.lock_array());
-      threads.emplace_back(use_random_array, ref(*locked_arrays.back()));
+      const size_t idx = pool.lock_array();
+      vector<double> &array = pool.arrays[idx];
+      indices.push_back(idx);
+      threads.emplace_back(use_random_array, ref(array));
     }
 
-  cout << "Locked " << locked_arrays.size() << " arrays" << endl
+  cout << "Locked " << indices.size() << " arrays" << endl
     << "Waiting for threads to finish" << endl;
 
   for (auto &t: threads)
@@ -51,9 +53,9 @@ TEST(basic, ctor)
   cout << "Threads finished" << endl;
 
   // unlock the arrays
-  ranges::for_each(locked_arrays, [&pool](const vector<double> *array)
+  ranges::for_each(indices, [&pool](const size_t idx)
                    {
-                     pool.release_array(*array);
+                     pool.release_array(idx);
                    });
 
   cout << "Arrays released" << endl;
@@ -157,28 +159,30 @@ struct BigPool : public testing::Test
     while (not stop)
       {
         const auto start_lock = chrono::high_resolution_clock::now();
-        const auto &array = pool.lock_array();
+        const size_t idx = pool.lock_array();
+        const auto &array = pool.arrays[idx];
         const auto end_lock = chrono::high_resolution_clock::now();
         const auto duration_lock = chrono::duration_cast<chrono::microseconds>(end_lock - start_lock);
         cout << "Lock took " << duration_lock.count() << " us" << endl;
 
         const auto start = chrono::high_resolution_clock::now();
-        double sum = accumulate(array.begin(), array.end(), 0.0);
+        const double sum = accumulate(array.begin(), array.end(), 0.0);
 
         const auto end = chrono::high_resolution_clock::now();
-        const auto duration = chrono::duration_cast<chrono::microseconds>(end - start);
-        cout << "Sum " << sum << "took " << duration.count() << " us" << endl;
+        const auto duration_sum = chrono::duration_cast<chrono::microseconds>(end - start);
+        cout << "Sum " << sum << "took " << duration_sum.count() << " us" << endl;
 
         const auto start_release = chrono::high_resolution_clock::now();
-        pool.release_array(array);
+        pool.release_array(idx);
         const auto end_release = chrono::high_resolution_clock::now();
         const auto duration_release = chrono::duration_cast<chrono::microseconds>(end_release - start_release);
         cout << "Release took " << duration_release.count() << " us" << endl;
 
-         if (duration.count() > threshold)
+        if (auto duration = duration_lock + duration_sum + duration_release;
+          duration.count() > threshold)
            {
              cout << "****************************************" << endl
-               << "Thread took too long: " << duration.count() << " us" << endl
+               << "Thread took too long: " << duration_sum.count() << " us" << endl
                << "****************************************" << endl;
              stop = true;
              result = false;

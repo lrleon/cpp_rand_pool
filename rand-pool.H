@@ -25,9 +25,6 @@ class RandomNumberPool
   list<size_t> in_use_arrays; // indices of arrays in use
   list<size_t> refilling_arrays; // indices of arrays being refilled
 
-  // parallel arrays
-  vector<vector<double>> pool; // true means states
-
   mutex mtx;
   condition_variable available_cv;
   condition_variable refilling_cv;
@@ -40,6 +37,7 @@ class RandomNumberPool
   const size_t pool_size;
   const size_t array_size;
   const unsigned long seed;
+  mutable vector<vector<double>> arrays;
 
   RandomNumberPool(const size_t pool_size, const size_t array_size,
                    const unsigned long seed)
@@ -49,9 +47,9 @@ class RandomNumberPool
     gsl_rng_set(rng, seed);
     for (size_t i = 0; i < pool_size; ++i)
       {
-        pool.emplace_back(array_size);
+        arrays.emplace_back(array_size);
         available_arrays.push_back(i);
-        fill_with_random_numbers(pool[i]);
+        fill_with_random_numbers(arrays[i]);
       }
     refiller = thread(&RandomNumberPool::refill_loop, this);
   }
@@ -75,14 +73,9 @@ class RandomNumberPool
   }
 
   // When I need a random buffer, I call this method.
-  // It throws an exception if no buffer is states
-  // Extremely careful with this method:
-  // 1) It blocks until a buffer is states (all buffers are in use)
-  // 2) It does not check if the buffer is already in use by another thread
-  // 3) It does not check if the pool is being destroyed
-  vector<double> &lock_array()
+  size_t lock_array()
   {
-    int i = 0;
+    size_t i = 0;
     unique_lock<mutex> lock(mtx);
     available_cv.wait(lock, [this, &i]()
     {
@@ -103,14 +96,13 @@ class RandomNumberPool
 
     cout << "Locking array " << i << endl;
 
-    return pool[i];
+    return i;
   }
 
   // Once I have used an array, I call this method for disposing it
   // and refilling it with fresh random numbers
-  void release_array(const vector<double> &array)
+  void release_array(const size_t idx)
   {
-    const size_t idx = &array - &pool[0];
     unique_lock lock(mtx);
     in_use_arrays.remove(idx);
     refilling_arrays.push_back(idx);
@@ -150,10 +142,10 @@ class RandomNumberPool
           }
 
         cout << "Refilling arrays" << endl;
-        int i = refilling_arrays.front();
+        const size_t i = refilling_arrays.front();
         refilling_arrays.pop_front();
 
-        fill_with_random_numbers(pool[i]);
+        fill_with_random_numbers(arrays[i]);
 
         available_arrays.push_back(i);
         available_cv.notify_one();
