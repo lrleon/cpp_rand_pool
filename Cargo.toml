@@ -1,2 +1,12 @@
-[dependencies]
-rand = "0.8.3"
+[workspace]
+
+members = ["rand_pool/"]
+
+[profile.release]
+opt-level = 2
+lto = "fat"
+codegen-units = 1
+
+[profile.release-with-debug]
+inherits = "release"
+debug = true
