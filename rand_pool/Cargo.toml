@@ -2,6 +2,8 @@
 name = "rand_pool"
 version = "0.1.0"
 edition = "2021"
+description = "Create a pool of random numbers pre generated thread safe"
+license = "MIT"
 
 [dependencies]
 rand = "0.8.4"
