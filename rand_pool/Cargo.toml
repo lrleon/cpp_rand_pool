@@ -7,7 +7,7 @@ license = "MIT"
 authors = ["Leandro Leon"]
 repository = "https://github.com/lrleon/cpp_rand_pool"
 readme = "./Readme.md"
-categories = ["random"]
+categories = ["data-structures"]
 
 [dependencies]
 rand = { version = "0.8.4", features = ["small_rng"] }
