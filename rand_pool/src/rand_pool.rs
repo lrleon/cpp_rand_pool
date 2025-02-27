@@ -1,5 +1,5 @@
 use rand::prelude::*;
-use rand::rngs::StdRng;
+use rand::rngs::SmallRng;
 use rand::SeedableRng;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -14,8 +14,8 @@ pub struct RandomNumberPool {
     available_cv: Arc<Condvar>,
     refilling_cv: Arc<Condvar>,
     stop: Arc<AtomicBool>,
-    rng: Arc<Mutex<StdRng>>,
-    arrays: Arc<Mutex<Vec<Arc<Mutex<Vec<f64>>>>>>,
+    rng: Arc<Mutex<SmallRng>>,
+    arrays: Arc<Mutex<Vec<Arc<Vec<f64>>>>>,
     pool_size: usize,
     array_size: usize,
     seed: u64,
@@ -29,7 +29,7 @@ impl RandomNumberPool {
         let available_cv = Arc::new(Condvar::new());
         let refilling_cv = Arc::new(Condvar::new());
         let stop = Arc::new(AtomicBool::new(false));
-        let rng = Arc::new(Mutex::new(StdRng::seed_from_u64(seed)));
+        let rng = Arc::new(Mutex::new(SmallRng::seed_from_u64(seed)));
         let arrays = Arc::new(Mutex::new(Vec::new()));
 
         // Initialize arrays and available indices
@@ -38,12 +38,9 @@ impl RandomNumberPool {
             let mut available_guard = available_arrays.lock().unwrap();
 
             for i in 0..pool_size {
-                let arr = Arc::new(Mutex::new(vec![0.0; array_size]));
-                {
-                    let mut arr_guard = arr.lock().unwrap();
-                    Self::fill_with_random_numbers(&mut arr_guard, &rng);
-                }
-                arrays_guard.push(arr);
+                let mut arr = vec![0.0; array_size];
+                Self::fill_with_random_numbers(&mut arr, &rng);
+                arrays_guard.push(Arc::new(arr));
                 available_guard.push_back(i);
             }
         }
@@ -69,7 +66,7 @@ impl RandomNumberPool {
         pool
     }
 
-    fn fill_with_random_numbers(array: &mut Vec<f64>, rng: &Arc<Mutex<StdRng>>) {
+    fn fill_with_random_numbers(array: &mut Vec<f64>, rng: &Arc<Mutex<SmallRng>>) {
         // println!("Filling array with random numbers");
         let mut rng_guard = rng.lock().unwrap();
         for item in array.iter_mut() {
@@ -86,6 +83,7 @@ impl RandomNumberPool {
         let stop = Arc::clone(&self.stop);
         let arrays = Arc::clone(&self.arrays);
         let rng = Arc::clone(&self.rng);
+        let array_size = self.array_size;
 
         thread::spawn(move || {
             while !stop.load(Ordering::Relaxed) {
@@ -108,10 +106,11 @@ impl RandomNumberPool {
 
                 if let Some(i) = idx {
                     // println!("Refilling arrays");
+                    let mut new_arr = vec![0.0; array_size];
+                    Self::fill_with_random_numbers(&mut new_arr, &rng);
                     {
-                        let arrays_guard = arrays.lock().unwrap();
-                        let mut arr = &mut arrays_guard[i].lock().unwrap();
-                        Self::fill_with_random_numbers(&mut arr, &rng);
+                        let mut arrays_guard = arrays.lock().unwrap();
+                        arrays_guard[i] = Arc::new(new_arr);
                     }
 
                     {
@@ -127,7 +126,7 @@ impl RandomNumberPool {
         });
     }
 
-    pub fn get_array(&self) -> Result<(usize, Arc<Mutex<Vec<f64>>>), &'static str> {
+    pub fn get_array(&self) -> Result<(usize, Arc<Vec<f64>>), &'static str> {
         let mut available_guard = self.available_arrays.lock().unwrap();
 
         loop {

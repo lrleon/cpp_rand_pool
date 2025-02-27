@@ -1,11 +1,13 @@
 [package]
 name = "rand_pool"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "Create a pool of random numbers pre generated thread safe"
 license = "MIT"
 authors = ["Leandro Leon"]
 repository = "https://github.com/lrleon/cpp_rand_pool"
+readme = "./Readme.md"
+categories = ["random"]
 
 [dependencies]
-rand = "0.8.4"
+rand = { version = "0.8.4", features = ["small_rng"] }
