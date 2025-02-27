@@ -4,8 +4,9 @@ use rand::SeedableRng;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
-use std::thread;
+use std::{array, thread};
 
+#[derive(Debug)]
 pub struct RandomNumberPool {
     available_arrays: Arc<Mutex<VecDeque<usize>>>, // indices of available arrays
     in_use_arrays: Arc<Mutex<VecDeque<usize>>>,    // indices of arrays in use
@@ -14,7 +15,7 @@ pub struct RandomNumberPool {
     refilling_cv: Arc<Condvar>,
     stop: Arc<AtomicBool>,
     rng: Arc<Mutex<StdRng>>,
-    arrays: Arc<Mutex<Vec<Vec<f64>>>>,
+    arrays: Arc<Mutex<Vec<Arc<Mutex<Vec<f64>>>>>>,
     pool_size: usize,
     array_size: usize,
     seed: u64,
@@ -37,8 +38,12 @@ impl RandomNumberPool {
             let mut available_guard = available_arrays.lock().unwrap();
 
             for i in 0..pool_size {
-                arrays_guard.push(vec![0.0; array_size]);
-                Self::fill_with_random_numbers(&mut arrays_guard[i], &rng);
+                let arr = Arc::new(Mutex::new(vec![0.0; array_size]));
+                {
+                    let mut arr_guard = arr.lock().unwrap();
+                    Self::fill_with_random_numbers(&mut arr_guard, &rng);
+                }
+                arrays_guard.push(arr);
                 available_guard.push_back(i);
             }
         }
@@ -65,12 +70,12 @@ impl RandomNumberPool {
     }
 
     fn fill_with_random_numbers(array: &mut Vec<f64>, rng: &Arc<Mutex<StdRng>>) {
-        println!("Filling array with random numbers");
+        // println!("Filling array with random numbers");
         let mut rng_guard = rng.lock().unwrap();
         for item in array.iter_mut() {
             *item = rng_guard.gen::<f64>();
         }
-        println!("Array filled");
+        // println!("Array filled");
     }
 
     fn start_refiller(&self) {
@@ -93,19 +98,20 @@ impl RandomNumberPool {
                     }
 
                     if stop.load(Ordering::Relaxed) {
-                        println!("Refiller thread stopping");
+                        // println!("Refiller thread stopping");
                         return;
                     }
 
-                    println!("Refiller thread woken");
+                    // println!("Refiller thread woken");
                     refilling_guard.pop_front()
                 };
 
                 if let Some(i) = idx {
-                    println!("Refilling arrays");
+                    // println!("Refilling arrays");
                     {
-                        let mut arrays_guard = arrays.lock().unwrap();
-                        Self::fill_with_random_numbers(&mut arrays_guard[i], &rng);
+                        let arrays_guard = arrays.lock().unwrap();
+                        let mut arr = &mut arrays_guard[i].lock().unwrap();
+                        Self::fill_with_random_numbers(&mut arr, &rng);
                     }
 
                     {
@@ -114,26 +120,27 @@ impl RandomNumberPool {
                     }
 
                     available_cv.notify_one();
-                    println!("Refilled array {}", i);
+                    // println!("Refilled array {}", i);
                 }
             }
             println!("Refiller thread finished");
         });
     }
 
-    pub fn lock_array(&self) -> Result<usize, &'static str> {
+    pub fn get_array(&self) -> Result<(usize, Arc<Mutex<Vec<f64>>>), &'static str> {
         let mut available_guard = self.available_arrays.lock().unwrap();
 
         loop {
             if self.stop.load(Ordering::Relaxed) {
-                return Err("Pool is being destroyed");
+                // return Err("Pool is being destroyed");
             }
 
             if let Some(i) = available_guard.pop_front() {
                 let mut in_use_guard = self.in_use_arrays.lock().unwrap();
                 in_use_guard.push_back(i);
-                println!("Locking array {}", i);
-                return Ok(i);
+                // println!("Locking array {}", i);
+                let array = self.arrays.lock().unwrap();
+                return Ok((i, array[i].clone()));
             }
 
             available_guard = self.available_cv.wait(available_guard).unwrap();
@@ -151,18 +158,24 @@ impl RandomNumberPool {
         drop(refilling_guard);
 
         self.refilling_cv.notify_one();
-        println!("Releasing array {}", idx);
+        // println!("Releasing array {}", idx);
     }
 }
 
 impl Drop for RandomNumberPool {
     fn drop(&mut self) {
-        println!("Destroying pool");
+        // println!("Destroying pool");
         self.stop.store(true, Ordering::Relaxed);
         self.available_cv.notify_all();
-        println!("Notified available_cv");
+        // println!("Notified available_cv");
         self.refilling_cv.notify_one();
-        println!("Notified refilling_cv");
-        println!("Pool destroyed");
+        // println!("Notified refilling_cv");
+        // println!("Pool destroyed");
+    }
+}
+
+impl Default for RandomNumberPool {
+    fn default() -> Self {
+        Self::new(10, 10, 0)
     }
 }
