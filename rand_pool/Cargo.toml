@@ -1,6 +1,6 @@
 [package]
 name = "rand_pool"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 description = "Create a pool of random numbers pre generated thread safe"
 license = "MIT"
