@@ -29,7 +29,13 @@ impl RandomNumberPool {
         let available_cv = Arc::new(Condvar::new());
         let refilling_cv = Arc::new(Condvar::new());
         let stop = Arc::new(AtomicBool::new(false));
-        let rng = Arc::new(Mutex::new(SmallRng::seed_from_u64(seed)));
+
+        let rng = if seed == 0 {
+            Arc::new(Mutex::new(SmallRng::from_entropy()))
+        } else {
+            Arc::new(Mutex::new(SmallRng::seed_from_u64(seed)))
+        };
+
         let arrays = Arc::new(Mutex::new(Vec::new()));
 
         // Initialize arrays and available indices
@@ -69,10 +75,7 @@ impl RandomNumberPool {
     fn fill_with_random_numbers(array: &mut Vec<f64>, rng: &Arc<Mutex<SmallRng>>) {
         // println!("Filling array with random numbers");
         let mut rng_guard = rng.lock().unwrap();
-        for item in array.iter_mut() {
-            *item = rng_guard.gen::<f64>();
-        }
-        // println!("Array filled");
+        rng_guard.fill(array.as_mut_slice());
     }
 
     fn start_refiller(&self) {
