@@ -4,7 +4,7 @@ use rand::SeedableRng;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
-use std::{array, thread};
+use std::thread;
 
 #[derive(Debug)]
 pub struct RandomNumberPool {
